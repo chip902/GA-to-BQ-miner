@@ -1,438 +1,16 @@
-import os
-import json
-import sys
 import time
-import multiprocessing
-from tqdm import tqdm
-from google.cloud import bigquery
-from google.oauth2 import service_account
-from googleapiclient.discovery import build
+import sys
+import json
+import os
+import concurrent.futures
 from googleapiclient.errors import HttpError
-
-# Set the path to your service account key file
-# "chs-website-409300-4302acfcf512.json"
-os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "petcolove-13c87f31f4c2.json"
-
-# Initialize BigQuery client
-bq_client = bigquery.Client()
-
-# Initialize the Analytics Reporting API V4 client
-credentials = service_account.Credentials.from_service_account_file(
-    os.environ["GOOGLE_APPLICATION_CREDENTIALS"],
-    scopes=["https://www.googleapis.com/auth/analytics.readonly"]
-)
-analytics = build("analyticsreporting", "v4", credentials=credentials)
-
-# Define the Dynamic Inputs
-
-VIEW_ID = '242734056'
-# input("Let's get mining! Enter your GA3 View ID, NOT Tracking ID, to Export to BQ: ").strip()
-START_DATE = input(
-    "Enter a Start Date for your dataset window (YYYY-MM-DD): ").strip()
-END_DATE = input(
-    "Enter the End Date for your dataset window (YYYY-MM-DD): ").strip()
-BQ_LOCATION = input("Enter the exact BigQuery Project Name: ").strip()
-
-# Define the GA3 requests for different tables
-requests = [
-    {
-        'events_1': {
-            "viewId": VIEW_ID,
-            "dateRanges": [{"startDate": START_DATE, "endDate": END_DATE}],
-            "dimensions": [
-                {"name": "ga:clientId"},
-                {"name": "ga:date"},
-                {"name": "ga:eventCategory"},
-                {"name": "ga:eventAction"},
-                {"name": "ga:eventLabel"},
-                {"name": "ga:pagePath"},
-                {"name": "ga:sourceMedium"}
-            ],
-            "metrics": [
-                {"expression": "ga:totalEvents"},
-                {"expression": "ga:uniqueEvents"}
-            ],
-            "pageSize": 100000
-        },
-    },
-    {
-        "events_2": {
-            "viewId": VIEW_ID,
-            "dateRanges": [{"startDate": START_DATE, "endDate": END_DATE}],
-            "dimensions": [
-                {"name": "ga:clientId"},
-                {"name": "ga:date"},
-                {"name": "ga:eventCategory"},
-                {"name": "ga:eventAction"},
-                {"name": "ga:eventLabel"},
-                {"name": "ga:pagePath"},
-                {"name": "ga:sourceMedium"}
-            ],
-            "metrics": [
-                {"expression": "ga:totalEvents"},
-                {"expression": "ga:eventValue"}
-            ],
-            "pageSize": 100000
-        }
-    },
-    {
-        "session": {
-            "viewId": VIEW_ID,
-            "dateRanges": [{"startDate": START_DATE, "endDate": END_DATE}],
-            "dimensions": [
-                {"name": "ga:clientId"},
-                {"name": "ga:date"},
-                {"name": "ga:sourceMedium"},
-                {"name": "ga:channelGrouping"},
-                {"name": "ga:keyword"},
-                {"name": "ga:campaign"},
-                {"name": "ga:adContent"},
-                {"name": "ga:fullReferrer"}
-            ],
-            "metrics": [
-                {"expression": "ga:sessions"},
-            ],
-            "pageSize": 100000
-        }
-    },
-    {
-        "new_users": {
-            "viewId": VIEW_ID,
-            "dateRanges": [{"startDate": START_DATE, "endDate": END_DATE}],
-            "dimensions": [
-                {"name": "ga:clientId"},
-                {"name": "ga:date"},
-                {"name": "ga:sourceMedium"},
-                {"name": "ga:channelGrouping"},
-                {"name": "ga:keyword"},
-                {"name": "ga:campaign"},
-                {"name": "ga:adContent"},
-                {"name": "ga:fullReferrer"}
-            ],
-            "metrics": [
-                {"expression": "ga:newUsers"}
-            ],
-            "pageSize": 100000
-        },
-    },
-    {
-        "total_users": {
-            "viewId": VIEW_ID,
-            "dateRanges": [{"startDate": START_DATE, "endDate": END_DATE}],
-            "dimensions": [
-                {"name": "ga:clientId"},
-                {"name": "ga:date"},
-                {"name": "ga:sourceMedium"},
-                {"name": "ga:channelGrouping"},
-                {"name": "ga:keyword"},
-                {"name": "ga:campaign"},
-                {"name": "ga:adContent"},
-                {"name": "ga:fullReferrer"}
-            ],
-            "metrics": [
-                {"expression": "ga:sessions"}
-            ],
-            "pageSize": 100000
-        },
-    },
-    {
-        "geo_1": {
-            "viewId": VIEW_ID,
-            "dateRanges": [{"startDate": START_DATE, "endDate": END_DATE}],
-            "dimensions": [
-                {"name": "ga:clientId"},
-                {"name": "ga:date"},
-                {"name": "ga:country"},
-                {"name": "ga:region"},
-                {"name": "ga:city"},
-                {"name": "ga:language"}
-            ],
-            "metrics": [
-                {"expression": "ga:users"},
-                {"expression": "ga:newUsers"},
-                {"expression": "ga:sessions"}
-            ],
-            "pageSize": 100000
-        },
-    },
-    {
-        "geo_2": {
-            "viewId": VIEW_ID,
-            "dateRanges": [{"startDate": START_DATE, "endDate": END_DATE}],
-            "dimensions": [
-                {"name": "ga:clientId"},
-                {"name": "ga:date"},
-                {"name": "ga:longitude"},
-                {"name": "ga:latitude"}
-            ],
-            "metrics": [
-                {"expression": "ga:users"},
-                {"expression": "ga:newUsers"},
-                {"expression": "ga:sessions"}
-            ],
-            "pageSize": 100000
-        }
-    },
-    # {
-    #     "demographics": {
-    #         "viewId": VIEW_ID,
-    #         "dateRanges": [{"startDate": START_DATE, "endDate": END_DATE}],
-    #         "dimensions": [
-    #             {"name": "ga:clientId"},
-    #             {"name": "ga:date"},
-    #             {"name": "ga:age"},
-    #             {"name": "ga:gender"},
-    #             {"name": "ga:region"},
-    #             {"name": "ga:city"},
-    #             {"name": "ga:browserLanguage"}
-    #         ],
-    #         "metrics": [
-    #             {"expression": "ga:users"},
-    #             {"expression": "ga:uniqueUsers"}
-    #         ],
-    #         "pageSize": 100000
-    #     }
-    # },
-    {
-        "user_types": {
-            "viewId": VIEW_ID,
-            "dateRanges": [{"startDate": START_DATE, "endDate": END_DATE}],
-            "dimensions": [
-                {"name": "ga:clientId"},
-                {"name": "ga:date"},
-                {"name": "ga:userType"},
-                {"name": "ga:sourceMedium"},
-                {"name": "ga:pagePath"}
-            ],
-            "metrics": [
-                {"expression": "ga:users"},
-                {"expression": "ga:sessions"},
-                {"expression": "ga:bounceRate"}
-            ],
-            "pageSize": 100000
-        }
-    },
-    {
-        "technology_1": {
-            "viewId": VIEW_ID,
-            "dateRanges": [{"startDate": START_DATE, "endDate": END_DATE}],
-            "dimensions": [
-                {"name": "ga:clientId"},
-                {"name": "ga:date"},
-                {"name": "ga:browser"},
-                {"name": "ga:operatingSystem"},
-                {"name": "ga:screenResolution"},
-                {"name": "ga:pagePath"}
-            ],
-            "metrics": [
-                {"expression": "ga:users"},
-                {"expression": "ga:sessions"},
-                {"expression": "ga:bounceRate"}
-            ],
-            "pageSize": 100000
-        }
-    },
-    {
-        "technology_2": {
-            "viewId": VIEW_ID,
-            "dateRanges": [{"startDate": START_DATE, "endDate": END_DATE}],
-            "dimensions": [
-                {"name": "ga:clientId"},
-                {"name": "ga:date"},
-                {"name": "ga:deviceCategory"},
-                {"name": "ga:pagePath"},
-                {"name": "ga:sourceMedium"},
-                {"name": "ga:mobileDeviceInfo"}
-            ],
-            "metrics": [
-                {"expression": "ga:sessions"},
-                {"expression": "ga:newUsers"},
-                {"expression": "ga:bounceRate"}
-            ],
-            "pageSize": 100000
-        }
-    },
-    {
-        "page_tracking_1": {
-            "viewId": VIEW_ID,
-            "dateRanges": [{"startDate": START_DATE, "endDate": END_DATE}],
-            "dimensions": [
-                {"name": "ga:clientId"},
-                {"name": "ga:date"},
-                {"name": "ga:pagePath"},
-                {"name": "ga:sourceMedium"}
-            ],
-            "metrics": [
-                {"expression": "ga:bounceRate"},
-                {"expression": "ga:pageviews"},
-                {"expression": "ga:uniquePageviews"},
-                {"expression": "ga:exits"},
-                {"expression": "ga:entrances"}
-            ],
-            "pageSize": 100000
-        }
-    },
-    {
-        "page_tracking_2": {
-            "viewId": VIEW_ID,
-            "dateRanges": [{"startDate": START_DATE, "endDate": END_DATE}],
-            "dimensions": [
-                {"name": "ga:clientId"},
-                {"name": "ga:date"},
-                {"name": "ga:landingPagePath"},
-                {"name": "ga:pagePath"},
-            ],
-            "metrics": [
-                {"expression": "ga:bounceRate"},
-                {"expression": "ga:pageviews"},
-                {"expression": "ga:uniquePageviews"},
-                {"expression": "ga:exits"},
-                {"expression": "ga:entrances"}
-            ],
-            "pageSize": 100000
-        }
-    },
-    {
-        "page_tracking_3": {
-            "viewId": VIEW_ID,
-            "dateRanges": [{"startDate": START_DATE, "endDate": END_DATE}],
-            "dimensions": [
-                {"name": "ga:clientId"},
-                {"name": "ga:date"},
-                {"name": "ga:pagePath"},
-                {"name": "ga:sourceMedium"}
-            ],
-            "metrics": [
-                {"expression": "ga:exits"},
-                {"expression": "ga:pageviews"}
-            ],
-            "pageSize": 100000
-        }
-    },
-    {
-        "performance": {
-            "viewId": VIEW_ID,
-            "dateRanges": [{"startDate": START_DATE, "endDate": END_DATE}],
-            "dimensions": [
-                {"name": "ga:clientId"},
-                {"name": "ga:date"},
-                {"name": "ga:browser"},
-                {"name": "ga:pagePath"},
-                {"name": "ga:country"},
-                {"name": "ga:sourceMedium"}
-            ],
-            "metrics": [
-                {"expression": "ga:avgPageLoadTime"},
-                {"expression": "ga:pageviews"},
-                {"expression": "ga:uniquePageviews"}
-            ],
-            "pageSize": 100000
-        }
-    },
-    {
-        "ads_1": {
-            "viewId": VIEW_ID,
-            "dateRanges": [{"startDate": START_DATE, "endDate": END_DATE}],
-            "dimensions": [
-                {"name": "ga:clientId"},
-                {"name": "ga:date"},
-                {"name": "ga:campaign"},
-                {"name": "ga:adGroup"}
-            ],
-            "metrics": [
-                {"expression": "ga:adClicks"},
-                {"expression": "ga:adCost"},
-                {"expression": "ga:CPC"},
-                {"expression": "ga:sessions"},
-                {"expression": "ga:goalCompletionsAll"}
-            ],
-            "pageSize": 100000
-        }
-    },
-    {
-        "ads_2": {
-            "viewId": VIEW_ID,
-            "dateRanges": [{"startDate": START_DATE, "endDate": END_DATE}],
-            "dimensions": [
-                {"name": "ga:clientId"},
-                {"name": "ga:date"},
-                {"name": "ga:searchKeyword"},
-                {"name": "ga:adMatchType"}
-            ],
-            "metrics": [
-                {"expression": "ga:adClicks"},
-                {"expression": "ga:adCost"},
-                {"expression": "ga:CPC"},
-                {"expression": "ga:sessions"},
-                {"expression": "ga:goalCompletionsAll"}
-            ],
-            "pageSize": 100000
-        }
-    },
-    # {
-    #     "ads_3": {
-    #         "viewId": VIEW_ID,
-    #         "dateRanges": [{"startDate": START_DATE, "endDate": END_DATE}],
-    #         "dimensions": [
-    #             {"name": "ga:clientId"},
-    #             {"name": "ga:date"},
-    #             {"name": "ga:searchKeyword"},
-    #             {"name": "ga:sourceMedium"}
-    #         ],
-    #         "metrics": [
-    #             {"expression": "ga:impressions"},
-    #             {"expression": "ga:adClicks"},
-    #             {"expression": "ga:sessions"},
-    #             {"expression": "ga:CTR"},
-    #             {"expression": "ga:avgPosition"}
-    #         ],
-    #         "pageSize": 100000
-    #     }
-    # },
-    {
-        "ads_4": {
-            "viewId": VIEW_ID,
-            "dateRanges": [{"startDate": START_DATE, "endDate": END_DATE}],
-            "dimensions": [
-                {"name": "ga:clientId"},
-                {"name": "ga:date"},
-                {"name": "ga:deviceCategory"},
-                {"name": "ga:searchKeyword"}
-            ],
-            "metrics": [
-                {"expression": "ga:impressions"},
-                {"expression": "ga:adClicks"},
-                {"expression": "ga:sessions"},
-                {"expression": "ga:CTR"},
-                {"expression": "ga:avgPosition"}
-            ],
-            "pageSize": 100000
-        }
-    },
-    {
-        "ecommerce": {
-            "viewId": VIEW_ID,
-            "dateRanges": [{"startDate": START_DATE, "endDate": END_DATE}],
-            "dimensions": [
-                {"name": "ga:clientId"},
-                {"name": "ga:date"},
-                {"name": "ga:productName"},
-                {"name": "ga:productCategory"},
-                {"name": "ga:productSku"}
-            ],
-            "metrics": [
-                {"expression": "ga:transactions"},
-                {"expression": "ga:transactionRevenue"},
-                {"expression": "ga:transactionShipping"},
-                {"expression": "ga:itemQuantity"}
-            ],
-            "pageSize": 100000
-        }
-    }
-]
+from googleapiclient.discovery import build
+from google.oauth2 import service_account
+from google.cloud import bigquery
+from tqdm import tqdm
 
 
-def fetch_report_data(request, table_name):
+def fetch_report_data(raw_request, table_name, analytics_service):
     """
     Fetch data from Google Analytics API with pagination.
     """
@@ -443,15 +21,15 @@ def fetch_report_data(request, table_name):
     with tqdm(desc=f"Fetching data for {table_name}", unit="request") as pbar:
         while True:
             if next_page_token:
-                request['pageToken'] = next_page_token
+                raw_request['pageToken'] = next_page_token
 
             try:
-                response = analytics.reports().batchGet(  # pylint: disable=no-member
-                    body={'reportRequests': [request]}
-                ).execute()
+                response = analytics_service.reports().batchGet(
+                    body={'reportRequests': [raw_request]}
+                ).execute()  # pylint: disable=no-member
             except HttpError as err:
                 print(f"An error occurred for table {table_name}: {err}")
-                log_error(request, err)
+                log_error(raw_request, err)
                 return None
 
             for report in response.get('reports', []):
@@ -484,7 +62,7 @@ def fetch_report_data(request, table_name):
         print(f"Fetched {len(all_rows)
                          } rows from GA report for table {table_name}.")
     else:
-        print(f"No report data fetched for table {table_name}.")
+        print(f"No report data fetched for {table_name}.")
     return all_rows
 
 
@@ -536,8 +114,11 @@ def generate_schema(schema_request):
 
 
 def process_request_wrapper(args):
-    request, index = args
-    process_request(request)
+    """
+    Wrapper function for multiprocessing.
+    """
+    request, index, view_id, start_date, end_date, project = args
+    process_request(request, view_id, start_date, end_date, project)
     return index
 
 
@@ -545,12 +126,24 @@ def process_request_wrapper(args):
 print("Fetching data from Google Analytics...")
 
 
-def process_request(request):
+def process_request(request, view_id, start_date, end_date, project):
     """
     Process a single request: fetch data, estimate costs, and upload to BigQuery.
     """
+    # Reinitialize analytics and BigQuery clients
+    credentials = service_account.Credentials.from_service_account_file(
+        os.environ["GOOGLE_APPLICATION_CREDENTIALS"],
+        scopes=["https://www.googleapis.com/auth/analytics.readonly"]
+    )
+    analytics_service = build("analyticsreporting",
+                              "v4", credentials=credentials)
+    bq_service = bigquery.Client()
+
     for table, table_request in request.items():
-        data = fetch_report_data(table_request, table)
+        table_request['viewId'] = view_id
+        table_request['dateRanges'] = [
+            {"startDate": start_date, "endDate": end_date}]
+        data = fetch_report_data(table_request, table, analytics_service)
         if data is None:
             print(f"Skipping upload for {table} due to errors.")
             continue
@@ -582,7 +175,7 @@ def process_request(request):
         schema = generate_schema(table_request)
 
         # Define the BigQuery table schema
-        TABLE_ID = f"{BQ_LOCATION}.UA_Backup.{table}_Data"
+        table_id = f"{project}.UA_Backup.{table}_Data"
         job_config = bigquery.LoadJobConfig(
             schema=schema,
             write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
@@ -590,8 +183,8 @@ def process_request(request):
 
         # Load data into BigQuery with progress bar
         print(f"Uploading data to BigQuery for {table} table...")
-        job = bq_client.load_table_from_json(
-            data, TABLE_ID, job_config=job_config)
+        job = bq_service.load_table_from_json(
+            data, table_id, job_config=job_config)
         with tqdm(total=100, desc=f"Uploading to BigQuery for {table} table") as pbar:
             while not job.done():
                 pbar.update(1)
@@ -602,8 +195,424 @@ def process_request(request):
         print(f"Data loaded into BigQuery successfully for {table} table.")
 
 
-# Run the requests in parallel
-print("Fetching data from Google Analytics...")
-with multiprocessing.Pool(processes=3) as pool:
-    results = list(tqdm(pool.imap_unordered(process_request_wrapper, [
-                   (request, i) for i, request in enumerate(requests)]), total=len(requests), desc="Overall Progress"))
+if __name__ == '__main__':
+    # Set the path to your service account key file
+    # "chs-website-409300-4302acfcf512.json"
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "petcolove-13c87f31f4c2.json"
+
+    # Define the Dynamic Inputs
+    VIEW_ID = '242734056'
+    # input("Let's get mining! Enter your GA3 View ID, NOT Tracking ID, to Export to BQ: ").strip()
+    START_DATE = input(
+        "Enter a Start Date for your dataset window (YYYY-MM-DD): ").strip()
+    END_DATE = input(
+        "Enter the End Date for your dataset window (YYYY-MM-DD): ").strip()
+    project_name = input("Enter the exact BigQuery Project Name: ").strip()
+    # Define the GA3 requests for different tables
+    requests = [
+        {
+            'events_1': {
+                "viewId": VIEW_ID,
+                "dateRanges": [{"startDate": START_DATE, "endDate": END_DATE}],
+                "dimensions": [
+                    {"name": "ga:clientId"},
+                    {"name": "ga:date"},
+                    {"name": "ga:eventCategory"},
+                    {"name": "ga:eventAction"},
+                    {"name": "ga:eventLabel"},
+                    {"name": "ga:pagePath"},
+                    {"name": "ga:sourceMedium"}
+                ],
+                "metrics": [
+                    {"expression": "ga:totalEvents"},
+                    {"expression": "ga:uniqueEvents"}
+                ],
+                "pageSize": 100000
+            },
+        },
+        {
+            "events_2": {
+                "viewId": VIEW_ID,
+                "dateRanges": [{"startDate": START_DATE, "endDate": END_DATE}],
+                "dimensions": [
+                    {"name": "ga:clientId"},
+                    {"name": "ga:date"},
+                    {"name": "ga:eventCategory"},
+                    {"name": "ga:eventAction"},
+                    {"name": "ga:eventLabel"},
+                    {"name": "ga:pagePath"},
+                    {"name": "ga:sourceMedium"}
+                ],
+                "metrics": [
+                    {"expression": "ga:totalEvents"},
+                    {"expression": "ga:eventValue"}
+                ],
+                "pageSize": 100000
+            }
+        },
+        {
+            "session": {
+                "viewId": VIEW_ID,
+                "dateRanges": [{"startDate": START_DATE, "endDate": END_DATE}],
+                "dimensions": [
+                    {"name": "ga:clientId"},
+                    {"name": "ga:date"},
+                    {"name": "ga:sourceMedium"},
+                    {"name": "ga:channelGrouping"},
+                    {"name": "ga:keyword"},
+                    {"name": "ga:campaign"},
+                    {"name": "ga:adContent"},
+                    {"name": "ga:fullReferrer"}
+                ],
+                "metrics": [
+                    {"expression": "ga:sessions"},
+                ],
+                "pageSize": 100000
+            }
+        },
+        {
+            "new_users": {
+                "viewId": VIEW_ID,
+                "dateRanges": [{"startDate": START_DATE, "endDate": END_DATE}],
+                "dimensions": [
+                    {"name": "ga:clientId"},
+                    {"name": "ga:date"},
+                    {"name": "ga:sourceMedium"},
+                    {"name": "ga:channelGrouping"},
+                    {"name": "ga:keyword"},
+                    {"name": "ga:campaign"},
+                    {"name": "ga:adContent"},
+                    {"name": "ga:fullReferrer"}
+                ],
+                "metrics": [
+                    {"expression": "ga:newUsers"}
+                ],
+                "pageSize": 100000
+            },
+        },
+        {
+            "total_users": {
+                "viewId": VIEW_ID,
+                "dateRanges": [{"startDate": START_DATE, "endDate": END_DATE}],
+                "dimensions": [
+                    {"name": "ga:clientId"},
+                    {"name": "ga:date"},
+                    {"name": "ga:sourceMedium"},
+                    {"name": "ga:channelGrouping"},
+                    {"name": "ga:keyword"},
+                    {"name": "ga:campaign"},
+                    {"name": "ga:adContent"},
+                    {"name": "ga:fullReferrer"}
+                ],
+                "metrics": [
+                    {"expression": "ga:sessions"}
+                ],
+                "pageSize": 100000
+            },
+        },
+        {
+            "geo_1": {
+                "viewId": VIEW_ID,
+                "dateRanges": [{"startDate": START_DATE, "endDate": END_DATE}],
+                "dimensions": [
+                    {"name": "ga:clientId"},
+                    {"name": "ga:date"},
+                    {"name": "ga:country"},
+                    {"name": "ga:region"},
+                    {"name": "ga:city"},
+                    {"name": "ga:language"}
+                ],
+                "metrics": [
+                    {"expression": "ga:users"},
+                    {"expression": "ga:newUsers"},
+                    {"expression": "ga:sessions"}
+                ],
+                "pageSize": 100000
+            },
+        },
+        {
+            "geo_2": {
+                "viewId": VIEW_ID,
+                "dateRanges": [{"startDate": START_DATE, "endDate": END_DATE}],
+                "dimensions": [
+                    {"name": "ga:clientId"},
+                    {"name": "ga:date"},
+                    {"name": "ga:longitude"},
+                    {"name": "ga:latitude"}
+                ],
+                "metrics": [
+                    {"expression": "ga:users"},
+                    {"expression": "ga:newUsers"},
+                    {"expression": "ga:sessions"}
+                ],
+                "pageSize": 100000
+            }
+        },
+        # {
+        #     "demographics": {
+        #         "viewId": VIEW_ID,
+        #         "dateRanges": [{"startDate": START_DATE, "endDate": END_DATE}],
+        #         "dimensions": [
+        #             {"name": "ga:clientId"},
+        #             {"name": "ga:date"},
+        #             {"name": "ga:age"},
+        #             {"name": "ga:gender"},
+        #             {"name": "ga:region"},
+        #             {"name": "ga:city"},
+        #             {"name": "ga:browserLanguage"}
+        #         ],
+        #         "metrics": [
+        #             {"expression": "ga:users"},
+        #             {"expression": "ga:uniqueUsers"}
+        #         ],
+        #         "pageSize": 100000
+        #     }
+        # },
+        {
+            "user_types": {
+                "viewId": VIEW_ID,
+                "dateRanges": [{"startDate": START_DATE, "endDate": END_DATE}],
+                "dimensions": [
+                    {"name": "ga:clientId"},
+                    {"name": "ga:date"},
+                    {"name": "ga:userType"},
+                    {"name": "ga:sourceMedium"},
+                    {"name": "ga:pagePath"}
+                ],
+                "metrics": [
+                    {"expression": "ga:users"},
+                    {"expression": "ga:sessions"},
+                    {"expression": "ga:bounceRate"}
+                ],
+                "pageSize": 100000
+            }
+        },
+        {
+            "technology_1": {
+                "viewId": VIEW_ID,
+                "dateRanges": [{"startDate": START_DATE, "endDate": END_DATE}],
+                "dimensions": [
+                    {"name": "ga:clientId"},
+                    {"name": "ga:date"},
+                    {"name": "ga:browser"},
+                    {"name": "ga:operatingSystem"},
+                    {"name": "ga:screenResolution"},
+                    {"name": "ga:pagePath"}
+                ],
+                "metrics": [
+                    {"expression": "ga:users"},
+                    {"expression": "ga:sessions"},
+                    {"expression": "ga:bounceRate"}
+                ],
+                "pageSize": 100000
+            }
+        },
+        {
+            "technology_2": {
+                "viewId": VIEW_ID,
+                "dateRanges": [{"startDate": START_DATE, "endDate": END_DATE}],
+                "dimensions": [
+                    {"name": "ga:clientId"},
+                    {"name": "ga:date"},
+                    {"name": "ga:deviceCategory"},
+                    {"name": "ga:pagePath"},
+                    {"name": "ga:sourceMedium"},
+                    {"name": "ga:mobileDeviceInfo"}
+                ],
+                "metrics": [
+                    {"expression": "ga:sessions"},
+                    {"expression": "ga:newUsers"},
+                    {"expression": "ga:bounceRate"}
+                ],
+                "pageSize": 100000
+            }
+        },
+        {
+            "page_tracking_1": {
+                "viewId": VIEW_ID,
+                "dateRanges": [{"startDate": START_DATE, "endDate": END_DATE}],
+                "dimensions": [
+                    {"name": "ga:clientId"},
+                    {"name": "ga:date"},
+                    {"name": "ga:pagePath"},
+                    {"name": "ga:sourceMedium"}
+                ],
+                "metrics": [
+                    {"expression": "ga:bounceRate"},
+                    {"expression": "ga:pageviews"},
+                    {"expression": "ga:uniquePageviews"},
+                    {"expression": "ga:exits"},
+                    {"expression": "ga:entrances"}
+                ],
+                "pageSize": 100000
+            }
+        },
+        {
+            "page_tracking_2": {
+                "viewId": VIEW_ID,
+                "dateRanges": [{"startDate": START_DATE, "endDate": END_DATE}],
+                "dimensions": [
+                    {"name": "ga:clientId"},
+                    {"name": "ga:date"},
+                    {"name": "ga:landingPagePath"},
+                    {"name": "ga:pagePath"},
+                ],
+                "metrics": [
+                    {"expression": "ga:bounceRate"},
+                    {"expression": "ga:pageviews"},
+                    {"expression": "ga:uniquePageviews"},
+                    {"expression": "ga:exits"},
+                    {"expression": "ga:entrances"}
+                ],
+                "pageSize": 100000
+            }
+        },
+        {
+            "page_tracking_3": {
+                "viewId": VIEW_ID,
+                "dateRanges": [{"startDate": START_DATE, "endDate": END_DATE}],
+                "dimensions": [
+                    {"name": "ga:clientId"},
+                    {"name": "ga:date"},
+                    {"name": "ga:pagePath"},
+                    {"name": "ga:sourceMedium"}
+                ],
+                "metrics": [
+                    {"expression": "ga:exits"},
+                    {"expression": "ga:pageviews"}
+                ],
+                "pageSize": 100000
+            }
+        },
+        {
+            "performance": {
+                "viewId": VIEW_ID,
+                "dateRanges": [{"startDate": START_DATE, "endDate": END_DATE}],
+                "dimensions": [
+                    {"name": "ga:clientId"},
+                    {"name": "ga:date"},
+                    {"name": "ga:browser"},
+                    {"name": "ga:pagePath"},
+                    {"name": "ga:country"},
+                    {"name": "ga:sourceMedium"}
+                ],
+                "metrics": [
+                    {"expression": "ga:avgPageLoadTime"},
+                    {"expression": "ga:pageviews"},
+                    {"expression": "ga:uniquePageviews"}
+                ],
+                "pageSize": 100000
+            }
+        },
+        {
+            "ads_1": {
+                "viewId": VIEW_ID,
+                "dateRanges": [{"startDate": START_DATE, "endDate": END_DATE}],
+                "dimensions": [
+                    {"name": "ga:clientId"},
+                    {"name": "ga:date"},
+                    {"name": "ga:campaign"},
+                    {"name": "ga:adGroup"}
+                ],
+                "metrics": [
+                    {"expression": "ga:adClicks"},
+                    {"expression": "ga:adCost"},
+                    {"expression": "ga:CPC"},
+                    {"expression": "ga:sessions"},
+                    {"expression": "ga:goalCompletionsAll"}
+                ],
+                "pageSize": 100000
+            }
+        },
+        {
+            "ads_2": {
+                "viewId": VIEW_ID,
+                "dateRanges": [{"startDate": START_DATE, "endDate": END_DATE}],
+                "dimensions": [
+                    {"name": "ga:clientId"},
+                    {"name": "ga:date"},
+                    {"name": "ga:searchKeyword"},
+                    {"name": "ga:adMatchType"}
+                ],
+                "metrics": [
+                    {"expression": "ga:adClicks"},
+                    {"expression": "ga:adCost"},
+                    {"expression": "ga:CPC"},
+                    {"expression": "ga:sessions"},
+                    {"expression": "ga:goalCompletionsAll"}
+                ],
+                "pageSize": 100000
+            }
+        },
+        # {
+        #     "ads_3": {
+        #         "viewId": VIEW_ID,
+        #         "dateRanges": [{"startDate": START_DATE, "endDate": END_DATE}],
+        #         "dimensions": [
+        #             {"name": "ga:clientId"},
+        #             {"name": "ga:date"},
+        #             {"name": "ga:searchKeyword"},
+        #             {"name": "ga:sourceMedium"}
+        #         ],
+        #         "metrics": [
+        #             {"expression": "ga:impressions"},
+        #             {"expression": "ga:adClicks"},
+        #             {"expression": "ga:sessions"},
+        #             {"expression": "ga:CTR"},
+        #             {"expression": "ga:avgPosition"}
+        #         ],
+        #         "pageSize": 100000
+        #     }
+        # },
+        {
+            "ads_4": {
+                "viewId": VIEW_ID,
+                "dateRanges": [{"startDate": START_DATE, "endDate": END_DATE}],
+                "dimensions": [
+                    {"name": "ga:clientId"},
+                    {"name": "ga:date"},
+                    {"name": "ga:deviceCategory"},
+                    {"name": "ga:searchKeyword"}
+                ],
+                "metrics": [
+                    {"expression": "ga:impressions"},
+                    {"expression": "ga:adClicks"},
+                    {"expression": "ga:sessions"},
+                    {"expression": "ga:CTR"},
+                    {"expression": "ga:avgPosition"}
+                ],
+                "pageSize": 100000
+            }
+        },
+        {
+            "ecommerce": {
+                "viewId": VIEW_ID,
+                "dateRanges": [{"startDate": START_DATE, "endDate": END_DATE}],
+                "dimensions": [
+                    {"name": "ga:clientId"},
+                    {"name": "ga:date"},
+                    {"name": "ga:productName"},
+                    {"name": "ga:productCategory"},
+                    {"name": "ga:productSku"}
+                ],
+                "metrics": [
+                    {"expression": "ga:transactions"},
+                    {"expression": "ga:transactionRevenue"},
+                    {"expression": "ga:transactionShipping"},
+                    {"expression": "ga:itemQuantity"}
+                ],
+                "pageSize": 100000
+            }
+        }
+    ]
+
+    # Run the requests in parallel using concurrent.futures
+    print("Fetching data from Google Analytics...")
+    with concurrent.futures.ProcessPoolExecutor(max_workers=3) as executor:
+        futures = {executor.submit(process_request_wrapper, (request, i, VIEW_ID,
+                                                             START_DATE, END_DATE, project_name)): i for i, request in enumerate(requests)}
+        for future in tqdm(concurrent.futures.as_completed(futures), total=len(futures), desc="Overall Progress"):
+            try:
+                future.result()  # Wait for the job to complete
+            except (HttpError, concurrent.futures.process.BrokenProcessPool) as e:
+                print(f"An error occurred: {e}")
