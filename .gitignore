@@ -1,3 +1,4 @@
 *.json
 myenv/
 venv/
+*.txt

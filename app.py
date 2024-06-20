@@ -2,6 +2,7 @@ import os
 import json
 import sys
 import time
+import multiprocessing
 from tqdm import tqdm
 from google.cloud import bigquery
 from google.oauth2 import service_account
@@ -30,6 +31,7 @@ START_DATE = input(
     "Enter a Start Date for your dataset window (YYYY-MM-DD): ").strip()
 END_DATE = input(
     "Enter the End Date for your dataset window (YYYY-MM-DD): ").strip()
+BQ_LOCATION = input("Enter the exact BigQuery Project Name: ").strip()
 
 # Define the GA3 requests for different tables
 requests = [
@@ -49,7 +51,8 @@ requests = [
             "metrics": [
                 {"expression": "ga:totalEvents"},
                 {"expression": "ga:uniqueEvents"}
-            ]
+            ],
+            "pageSize": 100000
         },
     },
     {
@@ -68,11 +71,12 @@ requests = [
             "metrics": [
                 {"expression": "ga:totalEvents"},
                 {"expression": "ga:eventValue"}
-            ]
+            ],
+            "pageSize": 100000
         }
     },
     {
-        "users_1": {
+        "session": {
             "viewId": VIEW_ID,
             "dateRanges": [{"startDate": START_DATE, "endDate": END_DATE}],
             "dimensions": [
@@ -87,12 +91,12 @@ requests = [
             ],
             "metrics": [
                 {"expression": "ga:sessions"},
-                {"expression": "ga:users"}
-            ]
+            ],
+            "pageSize": 100000
         }
     },
     {
-        "users_2": {
+        "new_users": {
             "viewId": VIEW_ID,
             "dateRanges": [{"startDate": START_DATE, "endDate": END_DATE}],
             "dimensions": [
@@ -106,9 +110,29 @@ requests = [
                 {"name": "ga:fullReferrer"}
             ],
             "metrics": [
-                {"expression": "ga:newUsers"},
-                {"expression": "ga:returningUsers"}
-            ]
+                {"expression": "ga:newUsers"}
+            ],
+            "pageSize": 100000
+        },
+    },
+    {
+        "total_users": {
+            "viewId": VIEW_ID,
+            "dateRanges": [{"startDate": START_DATE, "endDate": END_DATE}],
+            "dimensions": [
+                {"name": "ga:clientId"},
+                {"name": "ga:date"},
+                {"name": "ga:sourceMedium"},
+                {"name": "ga:channelGrouping"},
+                {"name": "ga:keyword"},
+                {"name": "ga:campaign"},
+                {"name": "ga:adContent"},
+                {"name": "ga:fullReferrer"}
+            ],
+            "metrics": [
+                {"expression": "ga:sessions"}
+            ],
+            "pageSize": 100000
         },
     },
     {
@@ -127,7 +151,8 @@ requests = [
                 {"expression": "ga:users"},
                 {"expression": "ga:newUsers"},
                 {"expression": "ga:sessions"}
-            ]
+            ],
+            "pageSize": 100000
         },
     },
     {
@@ -144,28 +169,30 @@ requests = [
                 {"expression": "ga:users"},
                 {"expression": "ga:newUsers"},
                 {"expression": "ga:sessions"}
-            ]
-        }
-    },
-    {
-        "demographics": {
-            "viewId": VIEW_ID,
-            "dateRanges": [{"startDate": START_DATE, "endDate": END_DATE}],
-            "dimensions": [
-                {"name": "ga:clientId"},
-                {"name": "ga:date"},
-                {"name": "ga:age"},
-                {"name": "ga:gender"},
-                {"name": "ga:region"},
-                {"name": "ga:city"},
-                {"name": "ga:browserLanguage"}
             ],
-            "metrics": [
-                {"expression": "ga:users"},
-                {"expression": "ga:uniqueUsers"}
-            ]
+            "pageSize": 100000
         }
     },
+    # {
+    #     "demographics": {
+    #         "viewId": VIEW_ID,
+    #         "dateRanges": [{"startDate": START_DATE, "endDate": END_DATE}],
+    #         "dimensions": [
+    #             {"name": "ga:clientId"},
+    #             {"name": "ga:date"},
+    #             {"name": "ga:age"},
+    #             {"name": "ga:gender"},
+    #             {"name": "ga:region"},
+    #             {"name": "ga:city"},
+    #             {"name": "ga:browserLanguage"}
+    #         ],
+    #         "metrics": [
+    #             {"expression": "ga:users"},
+    #             {"expression": "ga:uniqueUsers"}
+    #         ],
+    #         "pageSize": 100000
+    #     }
+    # },
     {
         "user_types": {
             "viewId": VIEW_ID,
@@ -181,7 +208,8 @@ requests = [
                 {"expression": "ga:users"},
                 {"expression": "ga:sessions"},
                 {"expression": "ga:bounceRate"}
-            ]
+            ],
+            "pageSize": 100000
         }
     },
     {
@@ -200,7 +228,8 @@ requests = [
                 {"expression": "ga:users"},
                 {"expression": "ga:sessions"},
                 {"expression": "ga:bounceRate"}
-            ]
+            ],
+            "pageSize": 100000
         }
     },
     {
@@ -216,11 +245,11 @@ requests = [
                 {"name": "ga:mobileDeviceInfo"}
             ],
             "metrics": [
-                {"expression": "ga:users"},
                 {"expression": "ga:sessions"},
                 {"expression": "ga:newUsers"},
                 {"expression": "ga:bounceRate"}
-            ]
+            ],
+            "pageSize": 100000
         }
     },
     {
@@ -239,7 +268,8 @@ requests = [
                 {"expression": "ga:uniquePageviews"},
                 {"expression": "ga:exits"},
                 {"expression": "ga:entrances"}
-            ]
+            ],
+            "pageSize": 100000
         }
     },
     {
@@ -251,7 +281,6 @@ requests = [
                 {"name": "ga:date"},
                 {"name": "ga:landingPagePath"},
                 {"name": "ga:pagePath"},
-                {"name": "ga:sourceMedium"}
             ],
             "metrics": [
                 {"expression": "ga:bounceRate"},
@@ -259,7 +288,8 @@ requests = [
                 {"expression": "ga:uniquePageviews"},
                 {"expression": "ga:exits"},
                 {"expression": "ga:entrances"}
-            ]
+            ],
+            "pageSize": 100000
         }
     },
     {
@@ -275,7 +305,8 @@ requests = [
             "metrics": [
                 {"expression": "ga:exits"},
                 {"expression": "ga:pageviews"}
-            ]
+            ],
+            "pageSize": 100000
         }
     },
     {
@@ -294,7 +325,8 @@ requests = [
                 {"expression": "ga:avgPageLoadTime"},
                 {"expression": "ga:pageviews"},
                 {"expression": "ga:uniquePageviews"}
-            ]
+            ],
+            "pageSize": 100000
         }
     },
     {
@@ -311,10 +343,10 @@ requests = [
                 {"expression": "ga:adClicks"},
                 {"expression": "ga:adCost"},
                 {"expression": "ga:CPC"},
-                {"expression": "ga:users"},
                 {"expression": "ga:sessions"},
                 {"expression": "ga:goalCompletionsAll"}
-            ]
+            ],
+            "pageSize": 100000
         }
     },
     {
@@ -325,38 +357,38 @@ requests = [
                 {"name": "ga:clientId"},
                 {"name": "ga:date"},
                 {"name": "ga:searchKeyword"},
-                {"name": "ga:campaign"},
                 {"name": "ga:adMatchType"}
             ],
             "metrics": [
                 {"expression": "ga:adClicks"},
                 {"expression": "ga:adCost"},
                 {"expression": "ga:CPC"},
-                {"expression": "ga:users"},
                 {"expression": "ga:sessions"},
                 {"expression": "ga:goalCompletionsAll"}
-            ]
-        }
-    },
-    {
-        "ads_3": {
-            "viewId": VIEW_ID,
-            "dateRanges": [{"startDate": START_DATE, "endDate": END_DATE}],
-            "dimensions": [
-                {"name": "ga:clientId"},
-                {"name": "ga:date"},
-                {"name": "ga:searchKeyword"},
-                {"name": "ga:sourceMedium"}
             ],
-            "metrics": [
-                {"expression": "ga:impressions"},
-                {"expression": "ga:adClicks"},
-                {"expression": "ga:sessions"},
-                {"expression": "ga:CTR"},
-                {"expression": "ga:avgPosition"}
-            ]
+            "pageSize": 100000
         }
     },
+    # {
+    #     "ads_3": {
+    #         "viewId": VIEW_ID,
+    #         "dateRanges": [{"startDate": START_DATE, "endDate": END_DATE}],
+    #         "dimensions": [
+    #             {"name": "ga:clientId"},
+    #             {"name": "ga:date"},
+    #             {"name": "ga:searchKeyword"},
+    #             {"name": "ga:sourceMedium"}
+    #         ],
+    #         "metrics": [
+    #             {"expression": "ga:impressions"},
+    #             {"expression": "ga:adClicks"},
+    #             {"expression": "ga:sessions"},
+    #             {"expression": "ga:CTR"},
+    #             {"expression": "ga:avgPosition"}
+    #         ],
+    #         "pageSize": 100000
+    #     }
+    # },
     {
         "ads_4": {
             "viewId": VIEW_ID,
@@ -373,7 +405,8 @@ requests = [
                 {"expression": "ga:sessions"},
                 {"expression": "ga:CTR"},
                 {"expression": "ga:avgPosition"}
-            ]
+            ],
+            "pageSize": 100000
         }
     },
     {
@@ -392,13 +425,14 @@ requests = [
                 {"expression": "ga:transactionRevenue"},
                 {"expression": "ga:transactionShipping"},
                 {"expression": "ga:itemQuantity"}
-            ]
+            ],
+            "pageSize": 100000
         }
     }
 ]
 
 
-def fetch_report_data(raw_request):
+def fetch_report_data(request, table_name):
     """
     Fetch data from Google Analytics API with pagination.
     """
@@ -406,18 +440,19 @@ def fetch_report_data(raw_request):
     next_page_token = None
     report = None
 
-    with tqdm(desc="Fetching data from Google Analytics", unit="request") as pbar:
+    with tqdm(desc=f"Fetching data for {table_name}", unit="request") as pbar:
         while True:
             if next_page_token:
-                raw_request['pageToken'] = next_page_token
+                request['pageToken'] = next_page_token
 
             try:
                 response = analytics.reports().batchGet(  # pylint: disable=no-member
-                    body={'reportRequests': [raw_request]}
+                    body={'reportRequests': [request]}
                 ).execute()
             except HttpError as err:
-                print(f"An error occurred: {err}")
-                exit()
+                print(f"An error occurred for table {table_name}: {err}")
+                log_error(request, err)
+                return None
 
             for report in response.get('reports', []):
                 column_header = report.get('columnHeader', {})
@@ -446,10 +481,20 @@ def fetch_report_data(raw_request):
             pbar.update(1)
 
     if report is not None:
-        print(f"Fetched {len(all_rows)} rows from GA report.")
+        print(f"Fetched {len(all_rows)
+                         } rows from GA report for table {table_name}.")
     else:
-        print("No report data fetched.")
+        print(f"No report data fetched for table {table_name}.")
     return all_rows
+
+
+def log_error(request, error):
+    """
+    Log the request and error details to a file for troubleshooting.
+    """
+    with open('error_log.txt', 'a', encoding="utf-8") as f:
+        f.write(f"Request: {json.dumps(request, indent=2)}\n")
+        f.write(f"Error: {error}\n\n")
 
 
 def estimate_size(raw_data):
@@ -490,31 +535,45 @@ def generate_schema(schema_request):
     return new_schema
 
 
+def process_request_wrapper(args):
+    request, index = args
+    process_request(request)
+    return index
+
+
 # Fetch the report data with progress bar
 print("Fetching data from Google Analytics...")
-for request in requests:
+
+
+def process_request(request):
+    """
+    Process a single request: fetch data, estimate costs, and upload to BigQuery.
+    """
     for table, table_request in request.items():
-        data = fetch_report_data(table_request)
+        data = fetch_report_data(table_request, table)
+        if data is None:
+            print(f"Skipping upload for {table} due to errors.")
+            continue
         print(f"Total rows fetched for {table} table: {len(data)}")
 
         # Estimate the size of the data
         size_in_bytes = estimate_size(data)
         size_in_mb = size_in_bytes / (1024 * 1024)
         print(f"Estimated size of the data for {table} table: {
-            size_in_bytes} bytes ({size_in_mb:.2f} MB)")
+              size_in_bytes} bytes ({size_in_mb:.2f} MB)")
 
         # Estimate the costs
         storage_cost, ingestion_cost = estimate_costs(size_in_bytes)
         print(f"Estimated storage cost per month for {
-            table} table: ${storage_cost:.2f}")
+              table} table: ${storage_cost:.2f}")
         print(f"Estimated ingestion cost for {
               table} table: ${ingestion_cost:.2f}")
 
         # Prompt user for confirmation before uploading
         user_input = input(f"The estimated size of the data for {table} table is {size_in_mb:.2f} MB. "
                            f"Storage cost per month: ${
-            storage_cost:.2f}, Ingestion cost: ${ingestion_cost:.2f}. "
-            "Do you want to proceed with the upload? (yes/no): ").strip().lower()
+                               storage_cost:.2f}, Ingestion cost: ${ingestion_cost:.2f}. "
+                           "Do you want to proceed with the upload? (yes/no): ").strip().lower()
         if user_input != 'yes':
             print(f"Upload canceled for {table} table by user.")
             continue
@@ -523,7 +582,7 @@ for request in requests:
         schema = generate_schema(table_request)
 
         # Define the BigQuery table schema
-        TABLE_ID = f"chs-website-409300.UA_Backup.{table}_Data"
+        TABLE_ID = f"{BQ_LOCATION}.UA_Backup.{table}_Data"
         job_config = bigquery.LoadJobConfig(
             schema=schema,
             write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
@@ -533,11 +592,18 @@ for request in requests:
         print(f"Uploading data to BigQuery for {table} table...")
         job = bq_client.load_table_from_json(
             data, TABLE_ID, job_config=job_config)
-        with tqdm(total=100, desc=f"Uploading to BigQuery for {table} table") as loadpbar:
+        with tqdm(total=100, desc=f"Uploading to BigQuery for {table} table") as pbar:
             while not job.done():
-                loadpbar.update(1)
+                pbar.update(1)
                 # Sleep for a short while before checking the job status again
                 time.sleep(1)
         job.result()  # Wait for the job to complete
 
         print(f"Data loaded into BigQuery successfully for {table} table.")
+
+
+# Run the requests in parallel
+print("Fetching data from Google Analytics...")
+with multiprocessing.Pool(processes=3) as pool:
+    results = list(tqdm(pool.imap_unordered(process_request_wrapper, [
+                   (request, i) for i, request in enumerate(requests)]), total=len(requests), desc="Overall Progress"))
