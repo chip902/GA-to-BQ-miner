@@ -144,7 +144,8 @@ def process_request(request, view_id, start_date, end_date, project, upload, est
     # Reinitialize analytics and BigQuery clients
     credentials = service_account.Credentials.from_service_account_file(
         os.environ["GOOGLE_APPLICATION_CREDENTIALS"],
-        scopes=["https://www.googleapis.com/auth/analytics.readonly"]
+        scopes=["https://www.googleapis.com/auth/analytics.readonly",
+                "https://www.googleapis.com/auth/cloud-platform"]
     )
     http = Http(timeout=3600)
     authorized_http = AuthorizedHttp(credentials, http=http)
@@ -223,7 +224,7 @@ def main():
                         help="Only estimate the costs and row consumption without uploading")
     args = parser.parse_args()
 
-    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "chs-website-409300-4302acfcf512.json"
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "petcolove-313fa8a723cf.json"
 
     # Define the Dynamic Inputs
     VIEW_ID = args.view_id
@@ -365,25 +366,6 @@ def main():
                     {"expression": "ga:pageviews"},
                     {"expression": "ga:uniquePageviews"},
                     {"expression": "ga:timeOnPage"},
-                ],
-                "pageSize": 2000000
-            }
-        },
-        {
-            "sessions_googleads": {
-                "viewId": VIEW_ID,
-                "dateRanges": [{"startDate": START_DATE, "endDate": END_DATE}],
-                "dimensions": [
-                    {"name": "ga:clientId"},
-                    {"name": "ga:date"},
-                    {"name": "ga:keyword"},
-                    {"name": "ga:adwordsAdGroupID"},
-                    {"name": "ga:campaignCode"}
-                ],
-                "metrics": [
-                    {"expression": "ga:adClicks"},
-                    {"expression": "ga:CPM"},
-                    {"expression": "ga:CPC"},
                 ],
                 "pageSize": 2000000
             }
